@@ -1,0 +1,56 @@
+pipeline {
+  agent any
+  stages {
+    stage('build') {
+      steps {
+        echo "Building..."
+        withCredentials([usernamePassword(credentialsId: 'raadco-registery', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+            sh "docker build -t registery.raadco.com.au/vdocsbackend:$BUILD_NUMBER ."
+            sh "echo $PASS | docker login -u $USER --password-stdin registery.raadco.com.au"
+            sh "docker push registery.raadco.com.au/vdocsbackend:$BUILD_NUMBER"
+        }
+      }
+    }
+    stage('Remove Unused docker image') {
+      steps{
+        sh "docker rmi registery.raadco.com.au/vdocsbackend:$BUILD_NUMBER"
+      }
+    }
+    stage('Deploy to K8s')
+		{
+			steps{
+				sshagent(['kubernetes-master'])
+				{
+					sh 'scp -r -o StrictHostKeyChecking=no vdocs-backend-deployment.yaml root@116.203.240.201:/root'
+					
+					script{
+						try{
+							sh 'ssh root@116.203.240.201 kubectl set image deployment/vdocsbackend-deployment vdocs-backend=registery.raadco.com.au/vdocsbackend:$BUILD_NUMBER --kubeconfig=/root/.kube/config'
+
+							}catch(error)
+							{
+
+							}
+					}
+				}
+			}
+		}
+    
+
+  }
+  post { 
+        success { 
+            mattermostSend (
+                                color: "good", 
+                                message: "Build SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} (<${env.BUILD_URL}|Link to build>)"
+                            )
+        }
+        failure { 
+            mattermostSend (
+                                color: "danger", 
+                                message: "Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER} 
+(<${env.BUILD_URL}|Link to build>)"
+                            )
+        }
+    }
+}
